@@ -16,6 +16,7 @@ BASE_URL = os.getenv('EU_API_BASE_URL')
 # Define the rate limit per second
 CALLS = 100
 PERIOD = 120
+MAX_RETRIES = 20
 
 def exponential_backoff(attempt):
     return min(60, (2 ** attempt) + random.random())
@@ -27,8 +28,7 @@ def getPlayerPUUID(summonerName, tagLine):
     query_params = { 'api_key': API_KEY }  
     puuid_endpoint = f'/riot/account/v1/accounts/by-riot-id/{summonerName}/{tagLine}'
     
-    max_retries = 10
-    for attempt in range(max_retries):
+    for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(f'{BASE_URL}{puuid_endpoint}', params=query_params)
             response.raise_for_status()
@@ -52,8 +52,7 @@ def get100MatchesOfPlayer(puuid):
     }
     matchlist_endpoint = f'/lol/match/v5/matches/by-puuid/{puuid}/ids'
 
-    max_retries = 10
-    for attempt in range(max_retries):
+    for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(f'{BASE_URL}{matchlist_endpoint}', params=query_params)
             response.raise_for_status()
@@ -72,8 +71,7 @@ def getMatchDataByMatchId(match_id):
     query_params = { 'api_key': API_KEY }
     matchdata_endpoint = f'/lol/match/v5/matches/{match_id}'
     
-    max_retries = 10
-    for attempt in range(max_retries):
+    for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(f'{BASE_URL}{matchdata_endpoint}', params=query_params)
             response.raise_for_status()
@@ -90,8 +88,7 @@ def getMatchDataByMatchId(match_id):
 def getMatchTimelineByMatchID(match_id):
     query_params = { 'api_key': API_KEY }
     
-    max_retries = 10
-    for attempt in range(max_retries):
+    for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(f'{BASE_URL}/lol/match/v5/matches/{match_id}/timeline', params=query_params)
             response.raise_for_status()

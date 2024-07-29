@@ -101,14 +101,14 @@ def gatherAllMatchIdsFromPuuid(userList, start=0, end=-1):
     for user in userList[start:end]:
         if counter == limit:
             counter = 0 # reset counter
-            writeToFile(matchIDs,"matchIDList", 'a') #write to file because its huge amounts of data
-            matchIDs.clear() #clear the list
-            time.sleep(20) #wait 2 mins (API limit)
+            writeToFile(matchIDs,"matchIDList", 'w') # write to file because its huge amounts of data
+            matchIDs.clear() # clear the list
+            time.sleep(1) # wait 2 mins (API limit)
         matchIDs.extend(get100MatchesOfPlayer(user.strip())) #pull as many match ids for the user (ranked)
         counter+=1
         time.sleep(10) #wait 1 second, rate limit
         print(f'completed: {user}')
-    writeToFile(matchIDs,"matchIDList", 'a')
+    writeToFile(matchIDs,"matchIDList", 'w')
     return matchIDs
         
 def gatherAllMatchDataFromFile(pathToFile,outputDir,start,end):
@@ -207,16 +207,17 @@ if __name__ == '__main__':
     #################################################################################
     ## THE METHODS ONLY NEEDED TO BE RUN ONCE FOR API CALLS!!!!                    ##
     #################################################################################
+    startTime = time.time()
 
     ## Pull User List
-    getUsersListFromSeedNames(seed_summonernames) #this is to gather a list of users
+    getUsersListFromSeedNames(seed_summonernames) # this is to gather a list of users
     userList = readFromFile("ranks/CompleteList.txt") #gathers user info
 
     ## shuffle the list to be able to reduce the size without cutting out any specific rank
     random.shuffle(userList)
 
     ## write to file because its huge amounts of data
-    writeToFile(userList,"CompleteListShuffled.txt", 'a', newline=False) 
+    writeToFile(userList,"CompleteListShuffled", 'a', newline=False) 
     
     userList = readFromFile("ranks/CompleteListShuffled.txt")
     
@@ -228,7 +229,7 @@ if __name__ == '__main__':
     # pull match IDs
     matchIdList = gatherAllMatchIdsFromPuuid(userList) #needs a range START, END
     print("Total Match data fetched: ", len(matchIdList))
-    # gatherAllMatchDataFromFile("matchList/matchListFinal.txt","match json files/",1400,2000) #DONE
+    gatherAllMatchDataFromFile("matchList/matchListFinal.txt","match json files/",1400,2000) #DONE
 
     #path to match list ## officially 0,2000
     # ParseMatchDataIntoSpreadsheet("matchList/matchListFinal.txt","joined_TESTONLY.csv",0,2000) #DONE
@@ -238,3 +239,7 @@ if __name__ == '__main__':
     # writes rank jsons to file
     ## Get the summoner IDs of players from the csv file and call the api to get the json file downloaded
     # GetPlayerRanks("joined.csv","rank json files/") 
+
+    endTime = time.time()
+    elapsedTime = endTime - startTime
+    print(f"Time taken: {elapsedTime} seconds")

@@ -3,7 +3,7 @@
 ## Due to the large size of the data, almost everything is written to file to avoid doing large data pulls every day.
 import random
 import time
-from api_pull import getMatchListFromSummonerName, getMatchDataAndTimeline, get100MatchesOfPlayer, GetPlayerRankedInfo, writeToJSONFile
+from api_pull import getMatchListFromSummonerName, getMatchDataByMatchId, getMatchTimelineByMatchID, GetPlayerRankedInfo, writeToJSONFile
 from parse_json import JoinMatchAndTimeline, Parse_match, Parse_Timeline
 import dedupe
 import json
@@ -14,27 +14,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-## Simply writes to file
-def writeToFile(listData, rank, mode, newline=True):
-    textfile = open(f"ranks/{rank}.txt", mode)
-    for item in listData:
-        if newline:
-            textfile.write(item + "\n")
-        else: 
-            textfile.write(item)
-    textfile.close()
-
-def writeCompleteRankList(listData):
-    with open("ranks/CompleteList.txt", "w") as fp:
-        for item in listData:
-            fp.write(item + "\n")
-    fp.close()
-
-# LIMITS: 
-# 20 requests every 1 seconds(s)
-# 100 requests every 2 minutes(s)
-
-## USERNAMES HAVE BEEN REDACTED FOR PRIVACY
 ## Dictionary used for seed users | key:value = rank:summoner name with tagline
 seed_summonernames = {
     'Iron': os.getenv('SUMMONER_NAME_IRON'),
@@ -49,41 +28,60 @@ seed_summonernames = {
     'Challenger': os.getenv('SUMMONER_NAME_CHALLENGER'),
 }
 
-## Call the API and get a list of each users matches
-## Download the json timeline and match data
-def getUsersListFromSeedNames(seed_users):
-    completePuuidList = []
-    
-    for rank, summonerIdWithTag in seed_users.items(): ## For each rank in the dict
-        summonerId, tagLine = summonerIdWithTag.split('#') # Using the hash character to split between summoner name and tagline
-        matchIDs = getMatchListFromSummonerName(summonerId, tagLine) ##
-        
-        tierPuuidList = []
-        counter = 0
-        for matchId in matchIDs: ## Loop through match IDs for current user
-            if counter == 50:
-                print("Phew! That took a while. Let me rest for 10 seconds!")
-                time.sleep(10) 
-                counter = 0 # reset counter
-            print(f'Doing match {matchId} for {summonerIdWithTag}')
-            matchData, _ = getMatchDataAndTimeline(matchId) ## Get timeline and match data
-            for i in range(len(matchData['metadata']['participants'])):
-                curentParticipant = matchData['metadata']['participants'][i]
-                tierPuuidList.append(str(curentParticipant))
-                completePuuidList.append(str(curentParticipant))
-            time.sleep(1)
-            counter+=1
+## Helper functions to write into files
+def writeFileToRanksDir(listData, rank, mode):
+    try:
+        with open(f"ranks/{rank}.txt", mode) as fp:
+            for item in listData:
+                fp.write(str(item) + '\n')
+        fp.close()
+    except IOError as e:
+        print(f"An error occurred while writing to the file: {e}")
 
-        tierPuuidList = list(set(tierPuuidList))
-        writeToFile(tierPuuidList, rank, 'w')
-        tierPuuidList.clear()
-    
-    completePuuidList = list(set(completePuuidList))
-    writeCompleteRankList(completePuuidList)
+def writeMatchList(matchList):
+    try:
+        with open(f"./matchList.txt", 'w') as fp:
+            for item in matchList:
+                fp.write(str(item) + '\n')
+        fp.close()
+        return True
+    except IOError as e:
+        print(f"An error occurred while writing to the file: {e}")
+        return False
     
 
-## Takes in the path to the text file with the compiled list, returns list of puuids
-## Simply reads from file
+def writeMatchDataToFile(matchId, matchData):
+    try:
+        with open(f"./matchData/{matchId}.json", "w") as fp:
+            json.dump(matchData, fp, indent=4)
+        fp.close()
+        return True
+    except IOError as e:
+        print(f"Error {e} encountered while writing to the file")
+        return False
+
+def writeMatchTimelineToFile(matchId, matchTimeline):
+    try:
+        with open(f"./matchTimeline/{matchId}.json", "w") as fp:
+            json.dump(matchTimeline, fp, indent=4)
+        fp.close()
+        return True
+    except IOError as e:
+        print(f"Error {e} encountered while writing to file")
+        return False
+
+def writeCompletePUUIDListOfPlayers(listData):
+    try:
+        with open("ranks/CompletePUUIDList.txt", "w") as fp:
+            for item in listData:
+                fp.write(str(item) + '\n')
+        fp.close()
+        return True
+    except IOError as e:
+        print(f"Error {e} encountered while writing to file")
+        return False
+    
+## Helper functions to read from files
 def readFromFile(pathToFile):
     userList = []
     with open(pathToFile, 'r') as f:
@@ -91,66 +89,11 @@ def readFromFile(pathToFile):
         userList.extend(lines)
 
     return userList
-        
-
-def gatherAllMatchIdsFromPuuid(userList, start=0, end=-1):
-    matchIDs = []
-    counter = 0 #used for rate limiting
-    limit = 40
-    #loop through the list
-    for user in userList[start:end]:
-        if counter == limit:
-            counter = 0 # reset counter
-            writeToFile(matchIDs,"matchIDList", 'w') # write to file because its huge amounts of data
-            matchIDs.clear() # clear the list
-            time.sleep(1) # wait 2 mins (API limit)
-        matchIDs.extend(get100MatchesOfPlayer(user.strip())) #pull as many match ids for the user (ranked)
-        counter+=1
-        time.sleep(10) #wait 1 second, rate limit
-        print(f'completed: {user}')
-    writeToFile(matchIDs,"matchIDList", 'w')
-    return matchIDs
-        
-def gatherAllMatchDataFromFile(pathToFile,outputDir,start,end):
-
-    ## FIX THIS WHOLE FUNCTION
-    matchList = readFromFile(pathToFile)
-    matchList.sort() #so its easy to establish where we left off
-    counter = 0 #used for rate limiting
-    limit = 20
-    firstRecord = True
-    for matchId in matchList[start:end]:
-        matchId = matchId.strip()
-        ## Get the data for each match ID
-        if counter == limit:
-            # time.sleep(120)
-            counter = 0
-
-        matchData, matchTimelineData = getMatchDataAndTimeline(matchId)
-        
-        try:
-            ## Use this to determine if it failed, since the error wont have the 'info' key
-            x=(len(matchData['info']))
-            y=(len(matchTimelineData['info']))
-        except Exception as e:
-            print(f"Failed for: {matchId}")
-            time.sleep(2)
-            counter+=1
-            continue
-        #didnt fail, so write to file
-        writeToJSONFile(f'{outputDir}{matchId}_match', matchData) ## write to file
-        writeToJSONFile(f'{outputDir}{matchId}_timeline', matchTimelineData) ## write to file
-
-        print(f'Successfully Processed Match: {matchId}')
-        time.sleep(3)
-        counter+=1
 
 def ReadJsonMatchAndTimelineData(pathToJson):
     f = open(f'{pathToJson}.json','r')
     data = json.load(f)
     return data
-
-    
 
 #Takes:
 # path to text file containing match IDs, 
@@ -202,34 +145,100 @@ def GetPlayerRanks(dirToData,outputDir):
         time.sleep(1.5)
 
 
+
+## Description: ----- MAIN FUNCTION TO FETCHES MATCH IDs AND MATCH DETAILS -----
+# 
+#       This function will fetch `num_matches` for the set of `seed_users`` that contain a rank representative summoner
+#       name along with tagline defined in the .env file. For each rank representative, it fetches matchIds for `num_matches` of the representative, 
+#       Using these matchIds, it then proceeds to fetch match data and timeline, which are stored locally as files. 
+# 
+## Input:
+#       seed_users: seed of summoner names with their summoner along and taglines
+#       num_matches: number of matches to fetch for each summoner
+## Output: 
+#       1) Inside ranks/ folder, it creates txt file containing PUUID of the players who played in the matches for the rank representative
+#       2) Inside matchData/ folder, writes mutiple JSON files for matchId containing match details
+#       3) Inside matchTimeline/ folder, writes multiple JSON files for matchId containing match timeline details
+#       4) Creates a matchList.txt file that contains matchIds of all matches from all tier of seed players
+
+def fetchInitialDataUsingSeednames(seed_users, num_matches):
+    completePuuidList = []
+    listOfMatches = []
+    
+    for rank, summonerIdWithTag in seed_users.items(): ## For each rank in the dict
+        summonerId, tagLine = summonerIdWithTag.split('#') ## Using the hash character to split between summoner name and tagline
+        matchIds = getMatchListFromSummonerName(summonerId, tagLine, num_matches) ## fetches the recent match id for a given summoner
+        
+        tierPuuidList = []
+        counter = 0
+        
+        for matchId in matchIds: ## Loop through match IDs for current user
+            
+            # append matchId to listOfMatches
+            if matchId not in listOfMatches:
+                listOfMatches.append(matchId)
+
+            if counter == 50:
+                print("Phew! That took a while. Let me rest for 10 seconds!")
+                time.sleep(10) 
+                counter = 0 # reset counter
+
+            print(f'Fetching match {matchId} for {summonerIdWithTag}')
+
+            # check if the match data has been fetched before; if not fetch and write to file
+            if os.path.isfile(os.path.join(f"./matchData/{matchId}.json")):
+                print(f"Match data file for match ID {matchId} already exists")
+                continue
+            else:
+                matchData = getMatchDataByMatchId(matchId)
+                counter += 1
+                fileWrite = writeMatchDataToFile(matchId=matchId, matchData=matchData)
+                if(fileWrite):
+                    print(f"Match data for match id {matchId} written successfully")
+
+            # check if the match timeline data has been fetched before; if not fetch and write to file 
+            if os.path.isfile(os.path.join(f"./matchTimeline/{matchId}.json")):
+                print(f"Match timeline file for match ID {matchId} already exists")
+                continue
+            else:
+                matchTimelineData = getMatchTimelineByMatchID(matchId)
+                counter += 1
+                fileWrite = writeMatchTimelineToFile(matchId=matchId, matchTimeline=matchTimelineData)
+                if(fileWrite):
+                    print(f"Match timeline for match id {matchId} written successfully")
+
+            
+            # if matchData was fetched; append game participants into tierPuuidList and completePuuidList
+            if matchData: 
+                for i in range(len(matchData['metadata']['participants'])):
+                    curentParticipant = matchData['metadata']['participants'][i]
+                    tierPuuidList.append(str(curentParticipant))
+                    completePuuidList.append(str(curentParticipant))
+
+        tierPuuidList = list(set(tierPuuidList))
+        tierSummonerIds = writeFileToRanksDir(tierPuuidList, rank, 'w')
+        if (tierSummonerIds):
+            print(f"PUUID list file for {rank} tier created successfully")
+        tierPuuidList.clear()
+    
+    completePuuidList = list(set(completePuuidList))
+    fileWrite = writeCompletePUUIDListOfPlayers(completePuuidList)
+    if(fileWrite):
+        print("Complete summoners PUUID list file created successfully")
+
+    # write match list to a file
+    fileWriteML = writeMatchList(listOfMatches)
+    if(fileWriteML):
+        print("File for match list created successfully")
+    
+# main boilerplate code
 if __name__ == '__main__':
 
-    #################################################################################
-    ## THE METHODS ONLY NEEDED TO BE RUN ONCE FOR API CALLS!!!!                    ##
-    #################################################################################
     startTime = time.time()
 
-    ## Pull User List
-    getUsersListFromSeedNames(seed_summonernames) # this is to gather a list of users
-    userList = readFromFile("ranks/CompleteList.txt") #gathers user info
-
-    ## shuffle the list to be able to reduce the size without cutting out any specific rank
-    random.shuffle(userList)
-
-    ## write to file because its huge amounts of data
-    writeToFile(userList,"CompleteListShuffled", 'a', newline=False) 
+    ## fetch initial data -- params: seed users names and number of matches whose data are to be fetched
+    fetchInitialDataUsingSeednames(seed_summonernames, 100)
     
-    userList = readFromFile("ranks/CompleteListShuffled.txt")
-    
-
-    ## The following 3 lines of code are repeated incrementally since API calls may 
-    ## take a long time. I did them in increments of 100.
-    ## The numerical values that remain (the final 2 in the parameters) are the positions it left off
-    ## and the position to finish at. Eg. gatherAllMatchIdsFromPuuid() starts at 3000 and ends at 4000
-    # pull match IDs
-    matchIdList = gatherAllMatchIdsFromPuuid(userList) #needs a range START, END
-    print("Total Match data fetched: ", len(matchIdList))
-    gatherAllMatchDataFromFile("matchList/matchListFinal.txt","match json files/",1400,2000) #DONE
 
     #path to match list ## officially 0,2000
     # ParseMatchDataIntoSpreadsheet("matchList/matchListFinal.txt","joined_TESTONLY.csv",0,2000) #DONE

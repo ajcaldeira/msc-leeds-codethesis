@@ -44,10 +44,10 @@ def getPlayerPUUID(summonerName, tagLine):
 ## Use PUUID to get last 100 games
 @sleep_and_retry
 @limits(calls=CALLS, period=PERIOD)
-def get100MatchesOfPlayer(puuid):
+def getMatchesForASummonerPUUID(puuid, num_matches):
     query_params = {
         'start': '0', 
-        'count': '5',
+        'count': num_matches,
         'api_key': API_KEY
     }
     matchlist_endpoint = f'/lol/match/v5/matches/by-puuid/{puuid}/ids'
@@ -109,9 +109,9 @@ def GetPlayerRankedInfo(summonerId):
     return summInfo
 
 ## This is the function called by other files to start the pull by the players Summoner Name
-def getMatchListFromSummonerName(summonerName, tagLine):
+def getMatchListFromSummonerName(summonerName, tagLine, num_matches):
     summonerPuuid = getPlayerPUUID(summonerName, tagLine) ## Get PUUID from Summoner Name
-    matchIDs = get100MatchesOfPlayer(summonerPuuid) ## Use PUUID to get last 100 games
+    matchIDs = getMatchesForASummonerPUUID(summonerPuuid, num_matches) ## Use PUUID to get last 100 games
     return matchIDs
 
 def getMatchDataAndTimeline(matchID=0):

@@ -5,3 +5,5 @@ lib64/
 ranks/
 pyvenv.cfg
 .env
+*.json
+matchList.txt

@@ -3,7 +3,7 @@
 ## Due to the large size of the data, almost everything is written to file to avoid doing large data pulls every day.
 import random
 import time
-from api_pull import getMatchListFromSummonerName, getMatchDataByMatchId, getMatchTimelineByMatchID, GetPlayerRankedInfo, writeToJSONFile
+from api_pull import getMatchListFromSummonerName, getMatchDataByMatchId, getMatchTimelineByMatchID, GetPlayerRankedInfo, getMatchesForASummonerPUUID, writeToJSONFile
 from parse_json import JoinMatchAndTimeline, Parse_match, Parse_Timeline
 import dedupe
 import json
@@ -40,9 +40,13 @@ def writeFileToRanksDir(listData, rank, mode):
 
 def writeMatchList(matchList):
     try:
-        with open(f"./matchList.txt", 'w') as fp:
+        with open(f"./matchList.txt", 'a') as fp:
+            preExistingMatchIds = fp.readlines()
             for item in matchList:
-                fp.write(str(item) + '\n')
+                if item not in preExistingMatchIds:
+                    fp.write(str(item) + '\n')
+                else:
+                    continue
         fp.close()
         return True
     except IOError as e:
@@ -196,6 +200,12 @@ def fetchInitialDataUsingSeednames(seed_users, num_matches):
                 if(fileWrite):
                     print(f"Match data for match id {matchId} written successfully")
 
+                # uses matchData to fetch additional participants; append game participants into tierPuuidList and completePuuidList
+                for i in range(len(matchData['metadata']['participants'])):
+                    curentParticipant = matchData['metadata']['participants'][i]
+                    tierPuuidList.append(str(curentParticipant))
+                    completePuuidList.append(str(curentParticipant))
+
             # check if the match timeline data has been fetched before; if not fetch and write to file 
             if os.path.isfile(os.path.join(f"./matchTimeline/{matchId}.json")):
                 print(f"Match timeline file for match ID {matchId} already exists")
@@ -206,17 +216,10 @@ def fetchInitialDataUsingSeednames(seed_users, num_matches):
                 fileWrite = writeMatchTimelineToFile(matchId=matchId, matchTimeline=matchTimelineData)
                 if(fileWrite):
                     print(f"Match timeline for match id {matchId} written successfully")
-
-            
-            # if matchData was fetched; append game participants into tierPuuidList and completePuuidList
-            if matchData: 
-                for i in range(len(matchData['metadata']['participants'])):
-                    curentParticipant = matchData['metadata']['participants'][i]
-                    tierPuuidList.append(str(curentParticipant))
-                    completePuuidList.append(str(curentParticipant))
+                
 
         tierPuuidList = list(set(tierPuuidList))
-        tierSummonerIds = writeFileToRanksDir(tierPuuidList, rank, 'w')
+        tierSummonerIds = writeFileToRanksDir(tierPuuidList, rank, 'a')
         if (tierSummonerIds):
             print(f"PUUID list file for {rank} tier created successfully")
         tierPuuidList.clear()
@@ -231,6 +234,70 @@ def fetchInitialDataUsingSeednames(seed_users, num_matches):
     if(fileWriteML):
         print("File for match list created successfully")
     
+
+def additionalFetchOfMatches():
+    extraPerPlayerMatchCount = 1
+    with open("ranks/CompletePUUIDList.txt", 'r') as fp:
+        puuidList = fp.readlines()
+    fp.close()
+
+    with open("./matchList.txt", 'r') as matchListReader:
+        matchList = matchListReader.readlines()
+    matchListReader.close()
+
+    newMatchesCount = 0 # variable to keep track of count of new matches added to matchList.txt
+    print(f"Currently matchList file contains a record of {len(matchList)} matches")
+
+    random.shuffle(puuidList)
+    print(puuidList[0:2])
+
+    with open("./matchList.txt", 'a') as matchListWriter:
+        for puuid in puuidList:
+            puuid = puuid.strip()
+            print(f"Current puuid is: {puuid}")
+            # fetch the additional match id for a given summoner puuid
+            tempMatchList = getMatchesForASummonerPUUID(puuid, extraPerPlayerMatchCount)
+
+            if ((newMatchesCount % 51) == 0):
+                time.sleep(2)
+            
+            for tempMatch in tempMatchList:
+                # check if the match data has been fetched before; if not fetch and write to file
+                if (os.path.isfile(os.path.join(f"./matchData/{tempMatch}.json")) and (tempMatch in matchList)):
+                    print(f"Match data file for match ID {tempMatch} already exists")
+                else:
+                    matchData = getMatchDataByMatchId(tempMatch)
+                    fileWrite = writeMatchDataToFile(matchId=tempMatch, matchData=matchData)
+                    if(fileWrite):
+                        print(f"Match data for match id {tempMatch} written successfully")
+
+                # check if the match timeline data has been fetched before; if not fetch and write to file 
+                if (os.path.isfile(os.path.join(f"./matchTimeline/{tempMatch}.json")) and (tempMatch in matchList)):
+                    print(f"Match timeline file for match ID {tempMatch} already exists")
+                else:
+                    matchTimelineData = getMatchTimelineByMatchID(tempMatch)
+                    fileWrite = writeMatchTimelineToFile(matchId=tempMatch, matchTimeline=matchTimelineData)
+                    if(fileWrite):
+                        print(f"Match timeline for match id {tempMatch} written successfully")
+
+                # writing new matches to matchList.txt
+                if tempMatch not in matchList:
+                    newMatchesCount += 1
+                    matchListWriter.write(str(tempMatch) + '\n') # the outer matchListWriter was opened for this purpose
+
+    print(f'Previous length of matches in matchList.txt: {len(matchList)}')
+    print(f'Additionally fetched match counts: {newMatchesCount}')
+    matchListWriter.close()
+
+    print('Verifying new length of match list file')
+
+    with open("./matchList.txt", 'r') as matchListReader:
+        updatedMatchList = matchListReader.readlines()
+
+    print(f'New length of matchList.txt file {len(updatedMatchList)}')
+    matchListReader.close()
+
+
 # main boilerplate code
 if __name__ == '__main__':
 
@@ -238,6 +305,14 @@ if __name__ == '__main__':
 
     ## fetch initial data -- params: seed users names and number of matches whose data are to be fetched
     fetchInitialDataUsingSeednames(seed_summonernames, 100)
+
+    ## fetch additional set of matches after randomly shuffling data in the set
+    print('####################################')
+    print('####################################')
+    print("##### Fetching additional data #####")
+    print('####################################')
+    print('####################################')
+    additionalFetchOfMatches()
     
 
     #path to match list ## officially 0,2000

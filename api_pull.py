@@ -103,10 +103,21 @@ def writeToJSONFile(type, gameData):
     with open(f'{type}.json', 'w') as outfile:
         json.dump(gameData, outfile)
 
-def GetPlayerRankedInfo(summonerId):
-    summInfox = requests.get(f'{BASE_URL}/lol/league/v4/entries/by-summoner/{summonerId}?api_key={API_KEY}')
-    summInfo = json.loads(summInfox.text)
-    return summInfo
+@sleep_and_retry
+@limits(calls=CALLS, period=PERIOD)
+def getSummonerRankInfo(gameServerId, summonerId):
+    query_params = { 'api_key': API_KEY }
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.get(f'https://{gameServerId}.api.riotgames.com/lol/league/v4/entries/by-summoner/{summonerId}', params=query_params)
+            response.raise_for_status()
+            summonerRankInfo = response.json()
+            return summonerRankInfo[0]
+        except requests.exceptions.RequestException as e:
+            print(f'Exception encountered: {e}')
+            wait_time = exponential_backoff(attempt)
+            time.sleep(wait_time)
 
 ## This is the function called by other files to start the pull by the players Summoner Name
 def getMatchListFromSummonerName(summonerName, tagLine, num_matches):

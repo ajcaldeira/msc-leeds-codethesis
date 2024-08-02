@@ -3,8 +3,8 @@
 ## Due to the large size of the data, almost everything is written to file to avoid doing large data pulls every day.
 import random
 import time
-from api_pull import getMatchListFromSummonerName, getMatchDataByMatchId, getMatchTimelineByMatchID, GetPlayerRankedInfo, getMatchesForASummonerPUUID, writeToJSONFile
-from parse_json import JoinMatchAndTimeline, Parse_match, Parse_Timeline
+from api_pull import getMatchListFromSummonerName, getMatchDataByMatchId, getMatchTimelineByMatchID, getSummonerRankInfo, getMatchesForASummonerPUUID, writeToJSONFile
+from parse_json import joinMatchAndTimeline, parseMatch, parseTimeline
 import dedupe
 import json
 import pandas as pd
@@ -27,6 +27,9 @@ seed_summonernames = {
     'Grandmaster': os.getenv('SUMMONER_NAME_GM'),
     'Challenger': os.getenv('SUMMONER_NAME_CHALLENGER'),
 }
+
+MATCH_AND_TIMELINE_CSV_OUTPUT = 'aggregateMatchAndTimeline.csv'
+SUMMONER_RANK_INFO_CSV_OUTPUT = 'summonerRankInfo.csv'
 
 ## Helper functions to write into files
 def writeFileToRanksDir(listData, rank, mode):
@@ -63,6 +66,15 @@ def writeMatchDataToFile(matchId, matchData):
     except IOError as e:
         print(f"Error {e} encountered while writing to the file")
         return False
+    
+def writeSummonerRanksToFile(gameServerPrefix, summonerId, response):
+    try:
+        with open(f'./summonerRanks/{gameServerPrefix}_{summonerId}.json', 'w') as fp:
+            json.dump(response, fp, indent=4)
+        fp.close()
+        return True
+    except IOError as e:
+        print(f"Error {e} encountered while writing to file")
 
 def writeMatchTimelineToFile(matchId, matchTimeline):
     try:
@@ -84,69 +96,99 @@ def writeCompletePUUIDListOfPlayers(listData):
     except IOError as e:
         print(f"Error {e} encountered while writing to file")
         return False
+
+
+# Function that processes matchData and matchTimeline JSON files, joins thems and writes
+# results to a single CSV file
+def parseMatchDataIntoSpreadsheet():
+
+    matchDataPath = './matchData/'
+    matchTimelinePath = './matchTimeline/'
+    fileNamesMatch = 0
+    validFiles = 0
+    individualDFs = []
+    for matchDataFile, matchTimelineFile in zip(os.listdir(matchDataPath), os.listdir(matchTimelinePath)):
+
+        print(f"Match file name: {matchDataFile}")
+        print(f"Match timeline file name : {matchTimelineFile}")
+
+        # need both the match data and timeline data for the corresponding matches
+        if (str(matchTimelineFile) == str(matchDataFile)):
+            print("Files match")
+            fileNamesMatch += 1
+            # processing for matchDataFile
+            if matchDataFile.endswith('.json'):
+                matchDataFileObj = os.path.join(matchDataPath, matchDataFile)
+
+                with open(matchDataFileObj, 'r') as matchDataFP:
+                    matchData = json.load(matchDataFP)
+                matchDataFP.close()
+
+                # filtering of games of CLASSIC 5 v 5 summoners rift, because the match API also returns other games!
+                if (matchData['info']['gameMode'] != "CLASSIC") or (matchData['info']['gameType'] != "MATCHED_GAME"):
+                    print("Not a classic 5v5 matched game")
+                    continue
+                else:
+                    matchDF = parseMatch(matchData)
+
+            if matchTimelineFile.endswith('.json'):
+                matchTimelineFileObj = os.path.join(matchTimelinePath, matchTimelineFile)
+
+                with open(matchTimelineFileObj, 'r') as matchTimelineFP:
+                    matchTimeline = json.load(matchTimelineFP)
+                matchTimelineFP.close()
+
+                matchTimelineDF = parseTimeline(matchTimeline)
+
+            joinedDF = joinMatchAndTimeline(matchDF=matchDF, timelineDF=matchTimelineDF)
+
+            if(joinedDF.shape[0] == 10):
+                individualDFs.append(joinedDF)
+                validFiles += 1
+            print(joinedDF.shape)
+    print("Valid files count : ", validFiles)
+    print("Total files match: ", fileNamesMatch)
+
+    aggregateDF = pd.concat(individualDFs, ignore_index=True)
+    aggregateDF.to_csv(f'./{MATCH_AND_TIMELINE_CSV_OUTPUT}', index=False)
+
+def processSummonerRanks():
+    # This function should only be processed once we have aggregated results of the matchData and matchTimeline
+    # As such perform a check to show that the CSV files generated after parsing exists or not
+    # try:
+    #     if os.path.isfile(f'./{MATCH_AND_TIMELINE_CSV_OUTPUT}'):
+    matchAndTimeLineDF = pd.read_csv(f'./{MATCH_AND_TIMELINE_CSV_OUTPUT}')
+
+    gameIdAndSummonerId = matchAndTimeLineDF[['gameId', 'summonerId']]
+    gameIdAndSummonerId['regionPrefix'] = gameIdAndSummonerId['gameId'].str.split('_', expand=True)[0].str.lower()
+
+    regionAndSummonerId = gameIdAndSummonerId[['regionPrefix', 'summonerId']]
+    regionAndSummonerId.drop_duplicates(inplace=True)
+
+    regionAndSummonerId.to_csv('./regionAndSummonerId.csv', index=False)
+
+    with open('./regionAndSummonerId.csv', 'r') as fp:
+        regionAndSummonerIdData = fp.readlines()[1:]
+    fp.close()
+
+
+    '''
+    for idx, row in concernedDF.iterrows():
+        summonerRankInfo = getSummonerRankInfo(gameServerId=row['regionPrefix'], summonerId=row['summonerId'])
+        if summonerRankInfo:
+            concernedDF.at[idx, 'queueType'] = summonerRankInfo['queueType']
+            concernedDF.at[idx, 'tier'] = summonerRankInfo['tier']
+            concernedDF.at[idx, 'rank'] = summonerRankInfo['rank']
+            concernedDF.at[idx, 'leaguePoints'] = summonerRankInfo['leaguePoints']
+            concernedDF.at[idx, 'wins'] = summonerRankInfo['wins']
+            concernedDF.at[idx, 'losses'] = summonerRankInfo['losses']
+    '''
     
-## Helper functions to read from files
-def readFromFile(pathToFile):
-    userList = []
-    with open(pathToFile, 'r') as f:
-        lines = f.readlines()
-        userList.extend(lines)
-
-    return userList
-
-def ReadJsonMatchAndTimelineData(pathToJson):
-    f = open(f'{pathToJson}.json','r')
-    data = json.load(f)
-    return data
-
-#Takes:
-# path to text file containing match IDs, 
-# output directory of the csv (without.csv ext), 
-# start and end index of the list
-def ParseMatchDataIntoSpreadsheet(pathToFile,outputDir,start,end):
-    #Read the match ID list to use as an index
-    matchList = readFromFile(pathToFile)        
-    matchList.sort()
-    firstRecord = False
-    if start == 0:
-        firstRecord = True
-    for matchId in matchList[start:end]:
-        matchId = matchId.strip()
-        #does not need .json at the end, just the dir and filename
-        matchData = ReadJsonMatchAndTimelineData(f"match json files/{matchId}_match")
-        matchTimelineData = ReadJsonMatchAndTimelineData(f"match json files/{matchId}_timeline")
-        # Parse data 
-        joinedDF = JoinMatchAndTimeline(Parse_match(matchData),Parse_Timeline(matchTimelineData))
-        if firstRecord:
-            joinedDF.to_csv(f'{outputDir}',index=False, mode='a') ## Write to csv (append)
-            firstRecord = False
-        else:
-            joinedDF.to_csv(f'{outputDir}',index=False, mode='a', header=False) ## Write to csv (append)
-
-def GetPlayerRanks(dirToData,outputDir):
-
-    ## Read the csv using pandas
-    df = pd.read_csv(dirToData)
-    ## Write the summID col into a list
-    summIDs = df['summonerId'].values.tolist()
-    gameIDs = df['gameId'].values.tolist()
-
-    ## read from the list 
-    counter = 0
-    playerCounter = 1
-    limit = 40
-    for uid,gameId in zip(summIDs[12000:],gameIDs[12000:]): #MAX 15380
-        if counter == limit: #api limits coming close
-            # time.sleep(60) #wait 2 mins
-            counter = 0
-        if playerCounter == 11: #done all players for the previous game
-            playerCounter = 1 #so reset the player counter for the new game
-        region = gameId[0:4].lower()
-        summInfo = GetPlayerRankedInfo(uid, region) ## Get the ranked info of the players account
-        writeToJSONFile(f'{outputDir}{gameId}_{playerCounter}', summInfo) ## write to file
-        counter+=1
-        playerCounter+=1
-        time.sleep(1.5)
+    # write concernedDF as csv
+    # concernedDF.to_csv(f'./{SUMMONER_RANK_INFO_CSV_OUTPUT}', index=False)
+    # print('Summoner Rank info written to file successfully')
+    # except Exception as e:
+    #     print(f'Exception {e} encountered while processing!')
 
 
 
@@ -304,7 +346,12 @@ if __name__ == '__main__':
     startTime = time.time()
 
     ## fetch initial data -- params: seed users names and number of matches whose data are to be fetched
-    fetchInitialDataUsingSeednames(seed_summonernames, 100)
+    print('############################################################')
+    print('############################################################')
+    print("##### Fetching initial data using seed summoner names! #####")
+    print('############################################################')
+    print('############################################################')
+    # fetchInitialDataUsingSeednames(seed_summonernames, 100)
 
     ## fetch additional set of matches after randomly shuffling data in the set
     print('####################################')
@@ -312,17 +359,28 @@ if __name__ == '__main__':
     print("##### Fetching additional data #####")
     print('####################################')
     print('####################################')
-    additionalFetchOfMatches()
+    # additionalFetchOfMatches()
     
 
-    #path to match list ## officially 0,2000
-    # ParseMatchDataIntoSpreadsheet("matchList/matchListFinal.txt","joined_TESTONLY.csv",0,2000) #DONE
+    # parse match and match timeline JSON files into CSV
+    print('############################################################')
+    print('############################################################')
+    print("##### Parsing JSON Files and Writing MATCH data to CSV #####")
+    print('############################################################')
+    print('############################################################')
+    # parseMatchDataIntoSpreadsheet()
 
     # API PULL:
     # params: path to csv match data, output path for each json (without .json ext)
     # writes rank jsons to file
     ## Get the summoner IDs of players from the csv file and call the api to get the json file downloaded
-    # GetPlayerRanks("joined.csv","rank json files/") 
+    # GetPlayerRanks("joined.csv","rank json files/")
+    print('############################################################')
+    print('############################################################')
+    print("################ Process Summoner Rank Info ################")
+    print('############################################################')
+    print('############################################################')
+    processSummonerRanks()
 
     endTime = time.time()
     elapsedTime = endTime - startTime

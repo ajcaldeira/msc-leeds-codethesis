@@ -3,13 +3,15 @@
 ## Due to the large size of the data, almost everything is written to file to avoid doing large data pulls every day.
 import random
 import time
-from api_pull import getMatchListFromSummonerName, getMatchDataByMatchId, getMatchTimelineByMatchID, getSummonerRankInfo, getMatchesForASummonerPUUID, writeToJSONFile
+from api_pull import getMatchListFromSummonerName, getMatchDataByMatchId, getMatchTimelineByMatchID, exponential_backoff, getMatchesForASummonerPUUID
 from parse_json import joinMatchAndTimeline, parseMatch, parseTimeline
 import dedupe
 import json
 import pandas as pd
 import glob
 import os
+import csv
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,6 +29,7 @@ seed_summonernames = {
     'Grandmaster': os.getenv('SUMMONER_NAME_GM'),
     'Challenger': os.getenv('SUMMONER_NAME_CHALLENGER'),
 }
+API_KEY = os.getenv('RIOT_API_KEY')
 
 MATCH_AND_TIMELINE_CSV_OUTPUT = 'aggregateMatchAndTimeline.csv'
 SUMMONER_RANK_INFO_CSV_OUTPUT = 'summonerRankInfo.csv'
@@ -153,10 +156,8 @@ def parseMatchDataIntoSpreadsheet():
     aggregateDF.to_csv(f'./{MATCH_AND_TIMELINE_CSV_OUTPUT}', index=False)
 
 def processSummonerRanks():
-    # This function should only be processed once we have aggregated results of the matchData and matchTimeline
-    # As such perform a check to show that the CSV files generated after parsing exists or not
-    # try:
-    #     if os.path.isfile(f'./{MATCH_AND_TIMELINE_CSV_OUTPUT}'):
+    query_params = { 'api_key': API_KEY }
+
     matchAndTimeLineDF = pd.read_csv(f'./{MATCH_AND_TIMELINE_CSV_OUTPUT}')
 
     gameIdAndSummonerId = matchAndTimeLineDF[['gameId', 'summonerId']]
@@ -166,29 +167,55 @@ def processSummonerRanks():
     regionAndSummonerId.drop_duplicates(inplace=True)
 
     regionAndSummonerId.to_csv('./regionAndSummonerId.csv', index=False)
-
-    with open('./regionAndSummonerId.csv', 'r') as fp:
-        regionAndSummonerIdData = fp.readlines()[1:]
-    fp.close()
-
-
-    '''
-    for idx, row in concernedDF.iterrows():
-        summonerRankInfo = getSummonerRankInfo(gameServerId=row['regionPrefix'], summonerId=row['summonerId'])
-        if summonerRankInfo:
-            concernedDF.at[idx, 'queueType'] = summonerRankInfo['queueType']
-            concernedDF.at[idx, 'tier'] = summonerRankInfo['tier']
-            concernedDF.at[idx, 'rank'] = summonerRankInfo['rank']
-            concernedDF.at[idx, 'leaguePoints'] = summonerRankInfo['leaguePoints']
-            concernedDF.at[idx, 'wins'] = summonerRankInfo['wins']
-            concernedDF.at[idx, 'losses'] = summonerRankInfo['losses']
-    '''
     
-    # write concernedDF as csv
-    # concernedDF.to_csv(f'./{SUMMONER_RANK_INFO_CSV_OUTPUT}', index=False)
-    # print('Summoner Rank info written to file successfully')
-    # except Exception as e:
-    #     print(f'Exception {e} encountered while processing!')
+    with open('./regionAndSummonerId.csv', 'r') as infile, open('./summonerRanks.csv', 'w', newline='') as outfile:
+        reader = csv.DictReader(infile)
+        fieldnames = reader.fieldnames + ['queueType', 'tier', 'rank', 'leaguePoints', 'wins', 'losses']
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for row in reader:
+            gameServerRegion = row['regionPrefix']
+            summId = row['summonerId']
+            response_received = False
+            
+            while not response_received:
+                print("++++++++++++++++++++++++++++++++++++++++++")
+                print(summId)
+                attempt = 1
+                try:
+                    response = requests.get(f'https://{gameServerRegion}.api.riotgames.com/lol/league/v4/entries/by-summoner/{summId}', params=query_params)
+                    response.raise_for_status()
+                    print(response.json())
+                    
+                    if((len(response.json()) == 0)): # this condition is added because the API response can be empty
+                        print("JSON response empty")
+                        response_received = True
+                        continue
+
+                    if((response.status_code == 200)): # check to stop the inner while loop for the current outer loop for loop; row item
+                        print("Valid response")
+                        response_received = True
+
+                        summonerRankInfo = response.json()[0]
+                    
+                        if('RANKED' in summonerRankInfo['queueType']):
+                            row['queueType'] = summonerRankInfo.get('queueType', 'NA')
+                            row['tier'] = summonerRankInfo.get('tier', 'NA')
+                            row['rank'] = summonerRankInfo.get('rank', 'NA')
+                            row['leaguePoints'] = summonerRankInfo.get('leaguePoints', 0)
+                            row['wins'] = summonerRankInfo.get('wins', 0)
+                            row['losses'] = summonerRankInfo.get('losses', 0)
+                            writer.writerow(row)
+                        
+                except requests.exceptions.RequestException as e:
+                    print(f'Exception encountered: {e}')
+                    wait_time = exponential_backoff(attempt)
+                    attempt += 1
+                    time.sleep(wait_time)
+
+    infile.close()
+    outfile.close()
 
 
 

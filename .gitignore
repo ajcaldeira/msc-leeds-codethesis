@@ -6,4 +6,6 @@ ranks/
 pyvenv.cfg
 .env
 *.json
+*.csv
+*.zip
 matchList.txt

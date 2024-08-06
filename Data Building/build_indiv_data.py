@@ -4,6 +4,7 @@ import pandasql
 import ast
 import csv
 
+# combines the assists from a player to all other players in the team in terms of kills, towers, monsters and pressure assists into one list.
 def JoinAssistLists(assistedKillIds,assistedTowerIds,assistedMonsterIds,assistedPressureIds):
     weightList = []
     for index,item in enumerate(assistedKillIds):
@@ -14,7 +15,9 @@ def JoinAssistLists(assistedKillIds,assistedTowerIds,assistedMonsterIds,assisted
         weightList.append(str(killSub + towerSub + monsterSub + pressureSub))
     return weightList
 
-def GenerateAssistsCsv(df,limit):
+# generates a csv that denotes assists from a player to another player in the team (including itself) such that
+# the assists include a sum of actual assists (kills assists + tower assists + dragon assists + pressure) from one player to another 
+def GenerateAssistsCsv(df):
     gameIds = df['gameId'].tolist()
     participantIds = df['participantId'].tolist()
     assistedKillIds = df['participantsAssisted'].tolist()
@@ -34,7 +37,7 @@ def GenerateAssistsCsv(df,limit):
     current_game = ""
     prev_game = ""
     firstloop = True
-    for index,assist in enumerate(assistedIds[0:limit]):      
+    for index,assist in enumerate(assistedIds):      
 
         current_game = gameIds[index]
         assist = ast.literal_eval(assist) #read the string as a literal list
@@ -71,12 +74,13 @@ def GenerateAssistsCsv(df,limit):
             toList.append(key)
             fromList.append(participantIds[index])
 
-    with open('individualCSVs/assists.csv', 'w') as f:
+    with open('./individual/assists.csv', 'w') as f:
         f.write(f"gid,tid,team,frm,to_player,weight\n")
         for gid,tid,team,frm,to,weight in zip(gameIdList,tidList,teamIdList,fromList,toList,weightList):
             f.write(f"{gid},{tid},{team},{frm},{to},{weight}\n")
 
-## TEST
+## divides the weight from one player to another generated in assists.csv 
+## by the total kills of the team in the match; writes to standardizedAssists.csv
 def StandardiseAssistsCSV(dfComplete,dfAssists):
     sql = '''
     SELECT gameId, teamId, sum(kills) as kills
@@ -100,8 +104,12 @@ def StandardiseAssistsCSV(dfComplete,dfAssists):
     dfFinal.drop(['kills'],axis=1,inplace=True)
     dfFinal.rename(columns={'weight': 'unstdWeight'},inplace=True)
     dfFinal.rename(columns={'StdWeight': 'weight'},inplace=True)
+    dfFinal.to_csv('./individual/standardizedAssists.csv', index=False)
     return dfFinal
    
+## input parameter df is standardizedAssists.csv
+# and sums up the unstdWeight to one player from all others, and writes it as unstdWeight
+# and sums up stdWeight to one player from all others and writes it as assistedInDegree
 def CalculateIndegree(df):
     # Number of assists the player has received
     # for each player, count the number of times the current player has been assisted
@@ -115,9 +123,11 @@ def CalculateIndegree(df):
     '''
     dfNew = pandasql.sqldf(sql, locals()) ## this has outdegree for every player now
     print(f"Shape of dfNew ind: {dfNew.shape}")
-    dfNew.to_csv("individualCSVs/indivAssistedIndegree.csv",index=False)
+    dfNew.to_csv("./individual/indivAssistedIndegree.csv",index=False)
 
-## reads in assists.csv
+## input parameter df is standardizedAssists.csv
+# and sums up the unstdWeight from one player to all others, to write as unstdWeight
+# and sums up stdWeight from one player to all others and writes it as assistedOutDegree
 def CalculateOutdegree(df):
     sql = '''
     SELECT gid, team, frm as player, sum(unstdWeight) as unstdWeight, sum(weight) as assistedOutdegree
@@ -126,10 +136,11 @@ def CalculateOutdegree(df):
     '''
     dfNew = pandasql.sqldf(sql, locals()) ## this has outdegree for every player now
     print(f"Shape of dfNew: {dfNew.shape}")
-    dfNew.to_csv("individualCSVs/indivAssistedOutdegree.csv",index=False)
+    dfNew.to_csv("./individual/indivAssistedOutdegree.csv",index=False)
 
+# just divide game metrics by corresponding gameDuration field
 def CalculatePerMinMetrics():
-    df = pd.read_csv("../complete.csv")
+    df = pd.read_csv("../finalDataset.csv")
     
     sql = '''
     SELECT 
@@ -163,10 +174,11 @@ def CalculatePerMinMetrics():
     dfFinal["uid"] = dfFinal["gameId"].astype(str) + "_" + dfFinal["teamId"].astype(str) + "_" + dfFinal["participantId"].astype(str) 
     dfFinal.drop(['gameId','teamId','participantId'], axis=1,inplace=True)
     # print(dfFinal)
-    dfFinal.to_csv("individualCSVs/indivPerMinMetrics.csv",index=False)
+    dfFinal.to_csv("./individual/indivPerMinMetrics.csv",index=False)
 
+# for each game and 2 teams within each game, it calculates total assists / total kills; number is same for five players
 def CalculateAssistRatio():
-    df = pd.read_csv("../complete.csv")
+    df = pd.read_csv("../finalDataset.csv")
 
     sql = '''
     SELECT gameId, teamId, sum(assists) assists, sum(kills) as kills
@@ -179,13 +191,13 @@ def CalculateAssistRatio():
     dfFinal["uid"] = dfFinal["gameId"].astype(str) + "_" + dfFinal["teamId"].astype(str)
     dfFinal.drop(['assists','kills','gameId','teamId'], axis=1,inplace=True)
 
-    dfFinal.to_csv("assistRatio.csv",index=False)
+    dfFinal.to_csv("./individual/assistRatio.csv",index=False)
 
 ## Similar to assist ratio but taking all assists (found in outdegreecentrality csv) by all kills 
 def CalculateIntensity():
 
-    dfComplete = pd.read_csv("../complete.csv")
-    dfOutdeg = pd.read_csv("individualCSVs/indivAssistedOutdegree.csv")
+    dfComplete = pd.read_csv("../finalDataset.csv")
+    dfOutdeg = pd.read_csv("./individual/indivAssistedOutdegree.csv")
 
     ## Add unique id for each individual to dfComplete
     dfComplete["uid"] = dfComplete["gameId"].astype(str) + "_" + dfComplete["teamId"].astype(str) + "_" + dfComplete["participantId"].astype(str)
@@ -215,13 +227,13 @@ def CalculateIntensity():
     dfFinal["totalKills"] = dfFinal[['kills','turretKills','epicMonsterKills']].sum(axis=1)
     
     ## Assists / Kills
-    dfFinal["insensity"] = dfFinal["assists"] / dfFinal["totalKills"]
+    dfFinal["intensity"] = dfFinal["assists"] / dfFinal["totalKills"]
     dfFinal.drop(['assists','totalKills','gameId','teamId','epicMonsterKills','turretKills','kills'], axis=1,inplace=True)
-    dfFinal.to_csv("individualCSVs/intensity.csv",index=False)
+    dfFinal.to_csv("./individual/intensity.csv",index=False)
   
 def CalculateTotalWins():
 
-    df = pd.read_csv("../complete.csv")
+    df = pd.read_csv("../finalDataset.csv")
 
     sql = '''
     SELECT gameId, teamId, participantId, win, avgrank
@@ -230,20 +242,20 @@ def CalculateTotalWins():
     dfFinal = pandasql.sqldf(sql, locals()) ## all unique game ids here
     dfFinal["uid"] = dfFinal["gameId"].astype(str) + "_" + dfFinal["teamId"].astype(str) + "_" + dfFinal["participantId"].astype(str)
     dfFinal.drop(columns=['gameId','teamId','participantId'],inplace=True)
-    dfFinal.to_csv("individualCSVs/gameWins.csv",index=False)
+    dfFinal.to_csv("./individual/gameWins.csv",index=False)
 
 def JoinMetricsTogether():
-    dfPerMin = pd.read_csv("individualCSVs/indivPerMinMetrics.csv")
-    dfOutdeg = pd.read_csv("individualCSVs/indivAssistedOutdegree.csv")
-    dfIndeg = pd.read_csv("individualCSVs/indivAssistedIndegree.csv")
-    dfAsRatio = pd.read_csv("individualCSVs/intensity.csv")
-    dfWins = pd.read_csv("individualCSVs/gameWins.csv")
+    dfPerMin = pd.read_csv("./individual/indivPerMinMetrics.csv")
+    dfOutdeg = pd.read_csv("./individual/indivAssistedOutdegree.csv")
+    dfIndeg = pd.read_csv("./individual/indivAssistedIndegree.csv")
+    dfAsRatio = pd.read_csv("./individual/intensity.csv")
+    dfWins = pd.read_csv("./individual/gameWins.csv")
 
     sql = '''
     SELECT 
     dfPerMin.uid, dfPerMin.KPM, dfPerMin.AsPM, dfPerMin.GPM,
     dfPerMin.visionScorePM, dfPerMin.champExperiencePM, dfPerMin.minionsKilledPM,
-    dfOutdeg.assistedOutdegree, dfIndeg.assistedIndegree, dfWins.win, dfWins.avgrank ,dfAsRatio.insensity
+    dfOutdeg.assistedOutdegree, dfIndeg.assistedIndegree, dfWins.win, dfWins.avgrank ,dfAsRatio.intensity
     FROM dfPerMin
     INNER JOIN dfOutdeg
         ON dfPerMin.uid = dfOutdeg.team
@@ -255,13 +267,14 @@ def JoinMetricsTogether():
         ON dfPerMin.uid = dfWins.uid
     '''
     dfFinal = pandasql.sqldf(sql, locals()) ## all unique game ids here
-    dfFinal.to_csv("individualCSVs/CombinedMeasurements.csv",index=False)
+    dfFinal.to_csv("./individual/CombinedMeasurements.csv",index=False)
     
 
 ## Generate the assists csv
-df = pd.read_csv("../complete.csv")
-GenerateAssistsCsv(df,10760) ## limit officially 10760 ## COmmented out since the csv already exists
-df2 = pd.read_csv("individualCSVs/assists.csv")
+df = pd.read_csv("../finalDataset.csv")
+print(df.shape)
+GenerateAssistsCsv(df)
+df2 = pd.read_csv("./individual/assists.csv")
 df3 = StandardiseAssistsCSV(df,df2)
 ## function names self explanatory
 CalculateOutdegree(df3) 

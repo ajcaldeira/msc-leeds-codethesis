@@ -4,6 +4,55 @@ import pandasql
 import ast
 import csv
 
+## start of added portion
+import networkx as nx
+from networkx import linalg
+import numpy as np
+from scipy.sparse.csgraph import laplacian
+
+## Return resistance value
+def CalcResistance(eigenvalues,N=5):
+    ## Round all values:
+
+    eigval = eigenvalues.tolist()
+    # print(eigval)
+    roundedEigval = [round(val, 2) for val in eigval]
+    roundedEigval = [i for i in roundedEigval if i != 0]
+
+    summ = 0
+    for e in roundedEigval:
+        summ = summ + (1/e)
+    R = 5 * summ
+    return R
+
+def GenerateResistances():
+    dfWeights = pd.read_csv('./team/assists.csv')
+    uidList = dfWeights['team'].tolist()
+    uidList = list(set(uidList))
+    resistanceDict = {}
+    counter = 0
+    for uid in uidList:
+        sql = f'''SELECT * FROM dfWeights WHERE team = "{uid}"'''
+        dfCurrentTeamWeights = pandasql.sqldf(sql, locals())
+
+        G = nx.from_pandas_edgelist(dfCurrentTeamWeights,'frm','to_player', edge_attr='weight',create_using=nx.MultiGraph(directed=True))
+
+        W = nx.adjacency_matrix(G)
+        D = np.diag(np.sum(np.array(W.todense()), axis=1))
+
+        L = D - W
+        e, v = np.linalg.eig(L)
+
+        resistanceValue = CalcResistance(e)
+        resistanceDict[uid] = round(resistanceValue,4)
+        counter+=1
+        if counter % 100 == 0:
+            print(f'Completed: {counter}/{len(uidList)}')
+        
+
+    dfIn = pd.DataFrame(resistanceDict.items(), columns=['team', 'resistance'])
+    dfIn.to_csv("./team/resistance.csv",index=False)
+
 def JoinAssistLists(assistedKillIds,assistedTowerIds,assistedMonsterIds,assistedPressureIds):
     weightList = []
     for index,item in enumerate(assistedKillIds):
@@ -14,7 +63,7 @@ def JoinAssistLists(assistedKillIds,assistedTowerIds,assistedMonsterIds,assisted
         weightList.append(str(killSub + towerSub + monsterSub + pressureSub))
     return weightList
 
-def GenerateAssistsCsv(df,limit):
+def GenerateAssistsCsv(df):
     gameIds = df['gameId'].tolist()
     participantIds = df['participantId'].tolist()
     assistedKillIds = df['participantsAssisted'].tolist()
@@ -33,7 +82,7 @@ def GenerateAssistsCsv(df,limit):
     current_game = ""
     prev_game = ""
     firstloop = True
-    for index,assist in enumerate(assistedIds[0:limit]):      
+    for index,assist in enumerate(assistedIds):      
 
         current_game = gameIds[index]
         assist = ast.literal_eval(assist) #read the string as a literal list
@@ -69,7 +118,7 @@ def GenerateAssistsCsv(df,limit):
             toList.append(key)
             fromList.append(participantIds[index])
 
-    with open('teamCSVs/assists.csv', 'w') as f:
+    with open('./team/assists.csv', 'w') as f:
         f.write(f"gid,team,frm,to_player,weight\n")
         for gid,team,frm,to,weight in zip(gameIdList,teamIdList,fromList,toList,weightList):
             f.write(f"{gid},{team},{frm},{to},{weight}\n")
@@ -78,6 +127,7 @@ def CalculateIndegree(df):
     # Number of assists the player has received
     # for each player, count the number of times the current player has been assisted
 
+    df.sort_values(by=['team'])
     sql = '''
     SELECT gid, team, to_player as player, sum(weight) as assistedIndegree
     FROM df
@@ -85,10 +135,11 @@ def CalculateIndegree(df):
     '''
     dfNew = pandasql.sqldf(sql, locals()) ## this has outdegree for every player now
     print(f"Shape of dfNew ind: {dfNew.shape}")
-    dfNew.to_csv("teamCSVs/assistedIndegree.csv",index=False)
+    dfNew.to_csv("./team/assistedIndegree.csv",index=False)
 
 ## reads in assists.csv
 def CalculateOutdegree(df):
+    df.sort_values(by=['team'])
     sql = '''
     SELECT gid, team, frm as player, sum(weight) as assistedOutdegree
     FROM df
@@ -96,12 +147,13 @@ def CalculateOutdegree(df):
     '''
     dfNew = pandasql.sqldf(sql, locals()) ## this has outdegree for every player now
     print(f"Shape of dfNew: {dfNew.shape}")
-    dfNew.to_csv("teamCSVs/assistedOutdegree.csv",index=False)
+    dfNew.to_csv("./team/assistedOutdegree.csv",index=False)
 
 def CalculateIndegreeCentrality():
     ## Formula = sum(maxIndegree - CID(playeri)) / 4 * number of assists
-    df = pd.read_csv("teamCSVs/assistedIndegree.csv")
+    df = pd.read_csv("./team/assistedIndegree.csv")
     
+    df.sort_values(by=['team'])
     ## Gather the variables needed
     sql = '''
     SELECT team,
@@ -127,12 +179,12 @@ def CalculateIndegreeCentrality():
         in_dict[row['team']] = round(numerator / denominator,4)
 
     dfIn = pd.DataFrame(in_dict.items(), columns=['Team', 'IndegreeCent'])
-    dfIn.to_csv("teamCSVs/indegreeCentrality.csv",index=False)
+    dfIn.to_csv("./team/indegreeCentrality.csv",index=False)
     
 def CalculateOutdegreeCentrality():
     ## Formula = sum(maxIndegree - CID(playeri)) / 4 * number of assists
-    df = pd.read_csv("teamCSVs/assistedOutdegree.csv")
-    
+    df = pd.read_csv("./team/assistedOutdegree.csv")
+    df.sort_values(by=['team'])
     ## Gather the variables needed
     sql = '''
     SELECT team, 
@@ -162,10 +214,10 @@ def CalculateOutdegreeCentrality():
         denom = 4 * row['assistedOutdegree'] ##4 * number of assists
         out_dict[row['team']] = round(numerator / denom,4)
     dfOut = pd.DataFrame(out_dict.items(), columns=['Team', 'OutdegreeCent'])
-    dfOut.to_csv("teamCSVs/outdegreeCentrality.csv",index=False)
+    dfOut.to_csv("./team/outdegreeCentrality.csv",index=False)
 
 def CalculatePerMinMetrics():
-    df = pd.read_csv("PATH_TO_FINAL_DATA_FILE.csv")
+    df = pd.read_csv("../finalDataset.csv")
     
     sql = '''
     SELECT 
@@ -198,13 +250,13 @@ def CalculatePerMinMetrics():
     dfFinal["uid"] = dfFinal["gameId"].astype(str) + "_" + dfFinal["teamId"].astype(str)
     dfFinal.drop(['gameId','teamId'], axis=1,inplace=True)
     # print(dfFinal)
-    dfFinal.to_csv("teamCSVs/perMinMetrics.csv",index=False)
+    dfFinal.to_csv("./team/perMinMetrics.csv",index=False)
 
 ## Intensity calculation 
 def CalculateIntensity():
 
-    dfComplete = pd.read_csv("PATH_TO_FINAL_DATA_FILE.csv")
-    dfOutdeg = pd.read_csv("teamCSVs/assistedOutdegree.csv")
+    dfComplete = pd.read_csv("../finalDataset.csv")
+    dfOutdeg = pd.read_csv("./team/assistedOutdegree.csv")
 
     ## Add unique id for each team to dfComplete
     dfComplete["uid"] = dfComplete["gameId"].astype(str) + "_" + dfComplete["teamId"].astype(str)
@@ -236,15 +288,15 @@ def CalculateIntensity():
     ## Assists / Kills
     dfFinal["insensity"] = dfFinal["assists"] / dfFinal["totalKills"]
     dfFinal.drop(['assists','totalKills','gameId','teamId','epicMonsterKills','turretKills','kills'], axis=1,inplace=True)
-    dfFinal.to_csv("teamCSVs/intensity.csv",index=False)
+    dfFinal.to_csv("./team/intensity.csv",index=False)
 
 ## Calculate Weight Centralisation
 def CalculateWeightCentralisation():
     
     ## Formula = /(5^2 - 5 - 1)A
 
-    df = pd.read_csv("teamCSVs/assists.csv")
-
+    df = pd.read_csv("./team/assists.csv")
+    df = df.sort_values(by=['team'])
     fromList = df['frm'].tolist() ## this is i
     teamList = df['team'].tolist()
     uniqueTeams = list(dict.fromkeys(teamList))
@@ -288,12 +340,12 @@ def CalculateWeightCentralisation():
 
     ## Write dict to file:
     dfOut = pd.DataFrame(weightCentDict.items(), columns=['Team', 'WeightCentralisation'])
-    dfOut.to_csv("teamCSVs/weightCentralisation.csv",index=False)
+    dfOut.to_csv("./team/weightCentralisation.csv",index=False)
 
 ## calculate the total wins
 def CalculateTotalWins():
 
-    df = pd.read_csv("PATH_TO_FINAL_DATA_FILE.csv")
+    df = pd.read_csv("../finalDataset.csv")
 
     sql = '''
     SELECT gameId, teamId, avg(win) as win, avg(avgrank) as avgrank
@@ -303,18 +355,18 @@ def CalculateTotalWins():
     dfFinal = pandasql.sqldf(sql, locals()) ## all unique game ids here
     dfFinal["uid"] = dfFinal["gameId"].astype(str) + "_" + dfFinal["teamId"].astype(str)
     dfFinal.drop(columns=['gameId','teamId'],inplace=True)
-    dfFinal.to_csv("teamCSVs/gameWins.csv",index=False)
+    dfFinal.to_csv("./team/gameWins.csv",index=False)
 
 ## join all needed metrics from all files into a single csv
 def JoinMetricsTogether():
     ## read each csv
-    dfPerMin = pd.read_csv("teamCSVs/perMinMetrics.csv")
-    dfOutdeg = pd.read_csv("teamCSVs/outdegreeCentrality.csv")
-    dfIndeg = pd.read_csv("teamCSVs/indegreeCentrality.csv")
-    dfAsRatio = pd.read_csv("teamCSVs/intensity.csv")
-    dfWeightCent = pd.read_csv("teamCSVs/weightCentralisation.csv")
-    dfWins = pd.read_csv("teamCSVs/gameWins.csv")
-    dfResistance = pd.read_csv("teamCSVs/resistance.csv")
+    dfPerMin = pd.read_csv("./team/perMinMetrics.csv")
+    dfOutdeg = pd.read_csv("./team/outdegreeCentrality.csv")
+    dfIndeg = pd.read_csv("./team/indegreeCentrality.csv")
+    dfAsRatio = pd.read_csv("./team/intensity.csv")
+    dfWeightCent = pd.read_csv("./team/weightCentralisation.csv")
+    dfWins = pd.read_csv("./team/gameWins.csv")
+    dfResistance = pd.read_csv("./team/resistance.csv")
     ## Joins all metrics into a single DF
     sql = '''
     SELECT 
@@ -337,13 +389,13 @@ def JoinMetricsTogether():
         ON dfPerMin.uid = dfResistance.team
     '''
     dfFinal = pandasql.sqldf(sql, locals()) ## all unique game ids here
-    dfFinal.to_csv("teamCSVs/CombinedMeasurements.csv",index=False)
+    dfFinal.to_csv("./team/CombinedMeasurements.csv",index=False)
     
 
 ## Generate the assists csv
-df = pd.read_csv("PATH_TO_FINAL_DATA_FILE.csv")
-GenerateAssistsCsv(df,10760) ## limit officially 10760 ## calc weightlist
-df2 = pd.read_csv("PATH_TO_ASSISTS_FILE.csv")
+df = pd.read_csv("../finalDataset.csv")
+GenerateAssistsCsv(df) ## limit officially 10760 ## calc weightlist
+df2 = pd.read_csv("./team/assists.csv")
 
 # these 2 are required for CalculateIndegreeCentrality & CalculateOutdegreeCentrality
 CalculateOutdegree(df2) ## calc. outdegree
@@ -355,4 +407,5 @@ CalculatePerMinMetrics() ## converts into per-minute metrics
 CalculateIntensity() ## calculate intensity 
 CalculateWeightCentralisation() ## calculate weight centralisation
 CalculateTotalWins() ## calc. total wins
+GenerateResistances()
 JoinMetricsTogether() ## join all metrics

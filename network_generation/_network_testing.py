@@ -4,23 +4,23 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 def GetGraphClustering(G):
-    A = nx.to_scipy_sparse_matrix(G)
+    A = nx.to_scipy_sparse_array(G)
     i = A.todense().ravel()
 
     return i
 
 def GetGraphList():
-    df = pd.read_csv('t.csv') ## weight file
-
+    df = pd.read_csv('../data_building/team/assists.csv') ## weight file
+    df_filtered = df[df['gid'] == 'EUW1_6895619260']
     graphList = []
     currentPlayer = 0
     prevPlayer = 0
     startIdx = 0
-    for index, row in df.iterrows():
+    for index, row in df_filtered.iterrows():
         currentPlayer = row['frm']
         if prevPlayer > currentPlayer: ##prevplayer is higher than the current, means its in the next game
             # the previous game is complete, create the graph
-            G = nx.from_pandas_edgelist(df[startIdx:index],'frm','to', edge_attr='weight',create_using=nx.MultiDiGraph(directed=True))
+            G = nx.from_pandas_edgelist(df[startIdx:index],'frm','to_player', edge_attr='weight',create_using=nx.MultiDiGraph(directed=True))
             graphList.append(GetGraphClustering(G))
             startIdx = index #reset the index back to the end of the current stint
             prevPlayer = currentPlayer
@@ -29,7 +29,7 @@ def GetGraphList():
             
     return graphList
 
-GetGraphList()
+gList = GetGraphList()
 
 
 
@@ -49,5 +49,5 @@ def DrawGraph(G):
     plt.show()
 
 ## Call these to run the file
-# GetGraphClustering()
-# DrawGraph(G)
+GetGraphClustering(gList)
+DrawGraph(gList)

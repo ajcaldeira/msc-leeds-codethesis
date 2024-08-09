@@ -160,6 +160,7 @@ def parseTimeline(match_timeline):
 
     ## Convert the dict to a dataframe, fill inf nan with -1 and converting back to int
     
+    # TODO: the column `participantsAssisted` should be renamed to `killsAssisted` makes better sense
     dfAssist = pd.DataFrame.from_dict(finalAssistDict, orient='index', columns=['participantsAssisted'])
     dfAssist.index.name = 'participant'
 

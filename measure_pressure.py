@@ -92,6 +92,7 @@ def ParseTimelinePressure(match_timeline):
     for i in range(1,11):
         finalPressureDict[str(i)] = str(finalPressureDict[str(i)])
 
+    # TODO: rename the df column as `pressureAssisted` for ease of understanding
     dfPressure = pd.DataFrame.from_dict(finalPressureDict, orient='index', columns=['participantsAssistedWithPressure'])
     dfPressure.index.name = 'participant'
 
